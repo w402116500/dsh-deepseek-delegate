@@ -1,0 +1,120 @@
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { ROOT, atomicJSON, loadJSON, redact } from './config.mjs';
+import { TaskManager } from './tasks.mjs';
+import { resolveLauncher, availableRoutes } from './harness.mjs';
+import { callTool } from './protocol.mjs';
+
+function nodeCommand() {
+  const executable = process.platform === 'win32' ? 'node.exe' : 'node';
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    const candidate = path.join(dir, executable);
+    if (fs.existsSync(candidate)) return candidate.replaceAll('\\', '/');
+  }
+  return 'node';
+}
+export function integrationConfig(dir) {
+  const command = nodeCommand();
+  const entry = path.join(ROOT, 'src/cli.mjs').replaceAll('\\', '/');
+  const env = { DEEPSEEK_MCP_DATA: dir.replaceAll('\\', '/') };
+  return {
+    toml: `[mcp_servers.deepseek_delegate]\ncommand = ${JSON.stringify(command)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 60\n\n[mcp_servers.deepseek_delegate.env]\nDEEPSEEK_MCP_DATA = ${JSON.stringify(env.DEEPSEEK_MCP_DATA)}\n`,
+    json: JSON.stringify({ mcpServers: { deepseek_delegate: { command, args: [entry, 'mcp'], env } } }, null, 2),
+  };
+}
+function safeEqual(a, b) {
+  const ab = Buffer.from(a || ''); const bb = Buffer.from(b || '');
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
+function localOrigin(origin) {
+  if (origin === 'dsh-app://app') return true; // Official Desktop application origin.
+  if (origin === 'null') return true; // Harness Desktop's file:// renderer.
+  try { const u = new URL(origin); return ['http:', 'https:'].includes(u.protocol) && ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname); }
+  catch { return false; }
+}
+async function body(req) {
+  const chunks = []; let size = 0;
+  for await (const chunk of req) { size += chunk.length; if (size > 100000) throw new Error('请求过大'); chunks.push(chunk); }
+  return JSON.parse(Buffer.concat(chunks).toString() || '{}');
+}
+export async function startServer(dir, { port = 0, launch } = {}) {
+  fs.mkdirSync(dir, { recursive: true });
+  const lock = path.join(dir, 'server.lock');
+  try { fs.mkdirSync(lock); }
+  catch (e) {
+    if (e.code !== 'EEXIST') throw e;
+    const owner = loadJSON(path.join(lock, 'owner.json'), null);
+    let alive = !owner;
+    if (owner) { try { process.kill(owner.pid, 0); alive = true; } catch { alive = false; } }
+    if (alive) throw new Error('DeepSeek 委派插件已在运行或正在启动');
+    fs.rmSync(lock, { recursive: true, force: true }); fs.mkdirSync(lock);
+  }
+  atomicJSON(path.join(lock, 'owner.json'), { pid: process.pid });
+  let manager;
+  try { manager = new TaskManager(dir, { launch }); }
+  catch (e) { fs.rmSync(lock, { recursive: true, force: true }); throw e; }
+  const token = randomBytes(32).toString('hex');
+  const startedAt = new Date().toISOString();
+  let origin, closing;
+  async function dispatch(method, pathname, data) {
+    if (closing) throw new Error('插件正在关闭');
+    const result = (value, status = 200) => ({ value, status });
+    if (method === 'GET' && pathname === '/api/state') {
+      let launcher, launcherError, routes = [], providerError;
+      try { launcher = resolveLauncher(manager.config.executable).detected; } catch (e) { launcherError = e.message; }
+      try { routes = availableRoutes(manager.config); } catch (e) { providerError = e.message; }
+      return result({ config: manager.settings(), tasks: manager.list(), launcher, launcherError, providerError, routes,
+        version: '1.0.0', startedAt, pid: process.pid, dataDir: dir, integration: integrationConfig(dir) });
+    }
+    if (method === 'GET' && pathname === '/api/ping') return result({ ok: true, pid: process.pid });
+    if (method === 'PUT' && pathname === '/api/config') return result(manager.settings(data));
+    if (method === 'POST' && pathname === '/api/tasks') return result(manager.delegate(data), 201);
+    const taskMatch = typeof pathname === 'string' && pathname.match(/^\/api\/tasks\/([\w-]+)$/);
+    if (method === 'GET' && taskMatch) return result(manager.publicTask(manager.get(taskMatch[1])));
+    const cancelMatch = typeof pathname === 'string' && pathname.match(/^\/api\/tasks\/([\w-]+)\/cancel$/);
+    if (method === 'POST' && cancelMatch) return result(manager.cancel(cancelMatch[1]));
+    if (method === 'POST' && pathname === '/api/tool') return result(await callTool(manager, data.name, data.arguments));
+    return result({ error: '接口不存在' }, 404);
+  }
+  const server = http.createServer(async (req, res) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-store');
+    const json = (value, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); };
+    try {
+      if (req.headers.host !== new URL(origin).host) return json({ error: '无效主机' }, 403);
+      if (req.headers.origin) {
+        if (!localOrigin(req.headers.origin)) return json({ error: '拒绝跨站请求' }, 403);
+        res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+      }
+      if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+      if (!safeEqual(req.headers.authorization?.replace(/^Bearer /, ''), token)) return json({ error: '插件连接已失效，请重新打开 Harness 页面' }, 401);
+      if (closing) return json({ error: '插件正在关闭' }, 503);
+      const pathname = new URL(req.url, origin).pathname;
+      const data = ['POST', 'PUT'].includes(req.method) ? await body(req) : undefined;
+      const { value, status } = await dispatch(req.method, pathname, data);
+      return json(value, status);
+    } catch (e) { if (!res.headersSent) json({ error: redact(e.message) }, 400); else res.end(); }
+  });
+  try {
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+  } catch (e) { await manager.close(); fs.rmSync(lock, { recursive: true, force: true }); throw e; }
+  origin = `http://127.0.0.1:${server.address().port}`;
+  const runtime = { pid: process.pid, origin, token, startedAt };
+  atomicJSON(path.join(dir, 'runtime.json'), runtime);
+  async function close() {
+    if (closing) return closing;
+    closing = (async () => {
+      await manager.close();
+      await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
+      fs.rmSync(path.join(dir, 'runtime.json'), { force: true });
+      fs.rmSync(lock, { recursive: true, force: true });
+    })();
+    return closing;
+  }
+  return { manager, runtime, close, server, dispatch };
+}

@@ -1,0 +1,66 @@
+{
+  "name": "dsh-deepseek-delegate",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness plugin with a delegation dashboard and external MCP bridge",
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=22",
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node src/cli.mjs status",
+    "mcp": "node src/cli.mjs mcp",
+    "config": "node src/cli.mjs config",
+    "plugin:install": "node scripts/manage-plugin.mjs install",
+    "plugin:uninstall": "node scripts/manage-plugin.mjs uninstall",
+    "test": "node --test test/*.test.mjs",
+    "test:lifecycle": "node scripts/lifecycle.mjs",
+    "test:smoke": "node scripts/smoke.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  },
+  "main": "./src/plugin.mjs",
+  "exports": {
+    ".": "./src/plugin.mjs",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "lib",
+    "scripts/build.mjs",
+    "scripts/manage-plugin.mjs",
+    "scripts/lifecycle.mjs",
+    "scripts/lifecycle-host.cjs",
+    "scripts/smoke.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/w402116500/dsh-deepseek-delegate.git"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-connection"
+      ]
+    }
+  }
+}

@@ -21,7 +21,7 @@ export function serveStdio(runtime) {
           const supported = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
           return result({ protocolVersion: supported.includes(msg.params?.protocolVersion) ? msg.params.protocolVersion : '2025-11-25',
             capabilities: { tools: {} }, serverInfo: { name: 'deepseek-delegate', version: '1.0.0' },
-            instructions: 'Use delegate_to_deepseek, then wait_task until terminal status. Failed/interrupted tasks may have side effects; inspect diagnostics before repeating. Manage settings in the DeepSeek Harness sidebar. Harness must be running with dsh-deepseek-delegate enabled.' });
+            instructions: 'Use delegate_to_deepseek, then wait_task until terminal status. Failed/interrupted tasks may have side effects; inspect diagnostics before repeating. Use retry_task to start a new attempt of a failed or interrupted task; nothing is retried automatically. Manage settings in the DeepSeek Harness sidebar. Harness must be running with dsh-deepseek-delegate enabled.' });
         }
         case 'ping': return result({});
         case 'tools/list': return result({ tools: TOOLS });

@@ -65,7 +65,7 @@ export async function startServer(dir, { port = 0, launch } = {}) {
       let launcher, launcherError, routes = [], providerError;
       try { launcher = resolveLauncher(manager.config.executable).detected; } catch (e) { launcherError = e.message; }
       try { routes = availableRoutes(manager.config); } catch (e) { providerError = e.message; }
-      return result({ config: manager.settings(), tasks: manager.list(), launcher, launcherError, providerError, routes,
+      return result({ config: manager.settings(), tasks: manager.list(), usage: manager.usageSummary(), launcher, launcherError, providerError, routes,
         version: '1.0.0', startedAt, pid: process.pid, dataDir: dir, integration: integrationConfig(dir) });
     }
     if (method === 'GET' && pathname === '/api/ping') return result({ ok: true, pid: process.pid });
@@ -75,6 +75,8 @@ export async function startServer(dir, { port = 0, launch } = {}) {
     if (method === 'GET' && taskMatch) return result(manager.publicTask(manager.get(taskMatch[1])));
     const cancelMatch = typeof pathname === 'string' && pathname.match(/^\/api\/tasks\/([\w-]+)\/cancel$/);
     if (method === 'POST' && cancelMatch) return result(manager.cancel(cancelMatch[1]));
+    const retryMatch = typeof pathname === 'string' && pathname.match(/^\/api\/tasks\/([\w-]+)\/retry$/);
+    if (method === 'POST' && retryMatch) return result(manager.retry(retryMatch[1]), 201);
     if (method === 'POST' && pathname === '/api/tool') return result(await callTool(manager, data.name, data.arguments));
     return result({ error: '接口不存在' }, 404);
   }

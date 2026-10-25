@@ -56,7 +56,7 @@ const owned = new Set();
 try {
   const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'plugin-smoke', version: '1.0.0' } });
   assert.equal(init.serverInfo.name, 'deepseek-delegate');
-  const tools = await rpc('tools/list', {}); assert.equal(tools.tools.length, 6);
+  const tools = await rpc('tools/list', {}); assert.equal(tools.tools.length, 7);
   const nonce = randomBytes(8).toString('hex');
   const first = await tool('delegate_to_deepseek', { prompt: `这是连通性测试。不要调用工具，不要读取或修改文件。请记住口令 ${nonce}，只回复 DEEPSEEK_PLUGIN_OK。` });
   owned.add(first.id);

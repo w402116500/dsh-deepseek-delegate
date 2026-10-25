@@ -71,6 +71,47 @@ test('literal prompt, Unicode result, native session continuation and stored res
   const stored = JSON.parse(fs.readFileSync(path.join(m.dir, 'tasks.json')));
   assert.equal(stored[0].answer, a.answer);
 });
+
+test('records and exposes Harness token usage', async t => {
+  const m = manager(t, 'usage');
+  const result = await finish(m, m.delegate({ prompt: 'measure tokens' }).id);
+  const expected = { totalTokens: 1234, inputTokens: 900, outputTokens: 334, thoughtTokens: 80, cachedReadTokens: 12, cachedWriteTokens: 4 };
+  assert.deepEqual(result.usage, expected);
+  assert.deepEqual(m.list()[0].usage, expected);
+  assert.deepEqual(m.usageSummary(), { taskCount: 1, reportedTaskCount: 1, ...expected });
+  const stored = JSON.parse(fs.readFileSync(path.join(m.dir, 'tasks.json')));
+  assert.deepEqual(stored[0].usage, expected);
+  const reloaded = new TaskManager(m.dir, { launch: launcher('usage') });
+  t.after(() => reloaded.close());
+  assert.deepEqual(reloaded.get(result.id).usage, expected);
+});
+
+test('accepts nested usage updates and ignores malformed counters', async t => {
+  const nested = manager(t, 'usage-nested');
+  const nestedResult = await finish(nested, nested.delegate({ prompt: 'nested usage' }).id);
+  assert.equal(nestedResult.usage.totalTokens, 1234);
+  const malformed = manager(t, 'usage-invalid');
+  const malformedResult = await finish(malformed, malformed.delegate({ prompt: 'bad usage' }).id);
+  assert.equal(malformedResult.status, 'completed');
+  assert.equal(malformedResult.usage, null);
+});
+
+test('normalizes real Harness usage names and sums multiple steps', async t => {
+  const m = manager(t, 'usage-real');
+  const result = await finish(m, m.delegate({ prompt: 'real usage' }).id);
+  assert.deepEqual(result.usage, {
+    totalTokens: 210, inputTokens: 130, outputTokens: 60,
+    thoughtTokens: 12, cachedReadTokens: 20, cachedWriteTokens: 0,
+  });
+});
+
+test('keeps ACP context occupancy separate from billable usage', async t => {
+  const m = manager(t, 'usage-context');
+  const result = await finish(m, m.delegate({ prompt: 'context usage' }).id);
+  assert.equal(result.usage, null);
+  assert.deepEqual(result.contextUsage, { used: 1234, size: 128000 });
+});
+
 test('provider errors keep late stderr and cannot become false success', async t => {
   const m = manager(t, 'error'), result = await finish(m, m.delegate({ prompt: 'x' }).id);
   assert.equal(result.status, 'failed'); assert.match(result.error, /provider rejected/); assert.match(result.stderr, /late diagnostic/);

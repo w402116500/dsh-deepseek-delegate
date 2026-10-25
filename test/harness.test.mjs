@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveLauncher } from '../src/harness.mjs';
+import { childEnvironment, resolveLauncher } from '../src/harness.mjs';
 
 function touch(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -36,4 +36,20 @@ test('keeps resolving legacy DeepSeek Harness app.asar layout', t => {
     env: { ELECTRON_RUN_AS_NODE: '1' },
     detected: executable,
   });
+});
+
+test('removes the desktop Host proxy dispatcher flag but preserves proxy endpoints', () => {
+  const env = childEnvironment({ env: { ELECTRON_RUN_AS_NODE: '1' } }, 'workspace-write', {
+    NODE_USE_ENV_PROXY: '1', HTTP_PROXY: 'http://127.0.0.1:7897',
+    HTTPS_PROXY: 'http://127.0.0.1:7897', ALL_PROXY: 'http://127.0.0.1:7897',
+    NO_PROXY: 'localhost,127.0.0.1', KEEP_ME: 'yes',
+  });
+  assert.equal(env.NODE_USE_ENV_PROXY, undefined);
+  assert.equal(env.HTTP_PROXY, 'http://127.0.0.1:7897');
+  assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:7897');
+  assert.equal(env.ALL_PROXY, 'http://127.0.0.1:7897');
+  assert.equal(env.NO_PROXY, 'localhost,127.0.0.1');
+  assert.equal(env.KEEP_ME, 'yes');
+  assert.equal(env.ELECTRON_RUN_AS_NODE, '1');
+  assert.equal(env.DSH_PERMISSION_MODE, 'workspace-write');
 });

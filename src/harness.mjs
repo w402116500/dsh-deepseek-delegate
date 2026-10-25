@@ -96,6 +96,18 @@ export function availableRoutes(config) {
   return providerPatches(config).flatMap(p => Object.entries(p.config.providers).flatMap(([provider, c]) =>
     (c.models || []).map(m => `${provider}/${m.id}`)));
 }
+export function childEnvironment(launcher, permissionMode, base = process.env) {
+  const env = { ...base, ...launcher.env, DSH_PERMISSION_MODE: permissionMode };
+  // The desktop Host installs NODE_USE_ENV_PROXY for its own Node runtime.
+  // Passing it to the Electron CLI child makes undici install its env proxy
+  // dispatcher too; on current DSH Desktop releases that dispatcher hangs the
+  // headless OpenAI request. Keep HTTP(S)_PROXY/ALL_PROXY so the child still
+  // uses the configured proxy, but let Electron's native networking handle it.
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === 'NODE_USE_ENV_PROXY') delete env[key];
+  }
+  return env;
+}
 export function spawnHarness(config, overlayPath, sessionId) {
   const launcher = resolveLauncher(config.executable);
   const args = [...launcher.prefix, '--profile', 'headless', '--patch', overlayPath, '--json'];
@@ -104,7 +116,7 @@ export function spawnHarness(config, overlayPath, sessionId) {
   return spawn(launcher.command, args, {
     cwd: config.cwd, windowsHide: true, shell: false,
     detached: process.platform !== 'win32',
-    env: { ...process.env, ...launcher.env, DSH_PERMISSION_MODE: config.permissionMode },
+    env: childEnvironment(launcher, config.permissionMode),
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 }

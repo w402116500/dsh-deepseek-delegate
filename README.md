@@ -27,11 +27,16 @@ npm run plugin:install
 
 ## 使用界面
 
-- **任务**：派发任务，查看状态、回答、工作目录和执行日志；取消排队或运行任务。
+- **任务**：派发任务，查看状态、回答、工作目录、Token 用量和执行日志；取消排队或运行任务。
 - **继续对话**：接续已完成任务的 Harness 原生会话，要求模型路由与工作目录一致。
+- **重试任务**：仅失败或中断的任务显示此入口。它在原任务记录之外新建一次执行尝试，沿用原任务的提示、目录、模型和权限快照，但使用全新会话。
 - **设置**：选择模型路由、CLI、工作目录、权限、并发数和超时；控制是否复用登录和第三方供应商。
 - **MCP 连接**：复制当前机器适用的 Codex TOML 或通用 MCP JSON。
 - **连通性测试**：发送要求不调用工具、不访问文件的测试提示，预期回答 `DEEPSEEK_PLUGIN_OK`。
+
+如果 Harness CLI 返回 ACP `usage`，任务会保存 `totalTokens`、`inputTokens`、`outputTokens`，以及可用的思考和缓存 Token 字段。兼容 Harness 当前使用的 `uncachedInputTokens`、`reasoningTokens`、`cacheReadTokens` 和 `cacheWriteTokens` 别名；有多个执行步骤时会累加每个步骤的 usage。任务列表和详情会显示用量，侧边栏会汇总已报告任务的 Token。ACP `usage_update` 的 `used/size` 只表示上下文占用，会单独显示为“上下文占用”，不会计入账单 Token。没有返回 usage 的 Harness 版本会显示“未报告”，不会用字符数估算。
+
+续聊任务可能收到 Harness 按会话累计的 usage，因此侧边栏的累计值适合比较独立任务；把同一会话的多次续聊直接相加可能重复计算。
 
 默认只读、单任务并发、600 秒超时。后台任务无法处理交互审批，因此审批策略为 `never`，文件访问仍由所选 Harness 沙箱模式控制。允许写入后，任务可能使用工具修改工作目录。
 
@@ -66,6 +71,7 @@ DEEPSEEK_MCP_DATA = "/absolute/path/to/delegate-data"
 | `get_task` | 获取状态、回答、会话 ID 和日志 |
 | `wait_task` | 等待最多 30 秒；仍在排队/运行时可再次调用 |
 | `cancel_task` | 取消任务，并终止该任务拥有的进程树 |
+| `retry_task` | 手动重试失败或中断的任务，返回新任务 ID |
 | `list_tasks` | 列出任务摘要 |
 | `get_deepseek_settings` | 读取委派设置 |
 
@@ -77,12 +83,22 @@ DEEPSEEK_MCP_DATA = "/absolute/path/to/delegate-data"
 
 MCP 初始化不要求 Harness 在线；调用业务工具时才发现插件。关闭或重启 Harness 后，下次调用会重新读取服务地址。失败或中断任务不会自动重试；重新派发前应先检查日志和工作目录。
 
+### 手动重试
+
+`retry_task`（界面上是任务详情里的「重试任务」按钮）不会自动触发，也不会被任何超时或失败路径调用：
+
+- 只有 `failed` 和 `interrupted` 可以重试。`queued`、`running`、`completed`、`cancelled` 一律返回错误，不会创建任务或启动进程；已完成的任务请用 `continueTaskId` 续聊。
+- 重试会新建一个任务并返回新的任务 ID。原任务的状态、回答和日志保持不变，重试任务用 `retryOf` 指向原任务，用 `attempt` 记录尝试次数（原任务为 1，第一次重试为 2）。
+- 新任务复制原任务的执行快照：提示、`cwd`、`modelRoute`、`permissionMode`、超时和供应商设置都取自原任务，而不是当前设置。提示来自已持久化的记录，因此是脱敏后的文本。
+- 重试始终是一次全新的执行尝试：它不会带上原任务的 `sessionId`，也不会用 `continueTaskId` 续聊。
+- 重试关系写入 `tasks.json`，重启后仍可在任务详情里看到来源和尝试次数。
+
 ## 数据与连接
 
 默认数据目录是 `~/.dsh/deepseek-delegate`，可用 `DEEPSEEK_MCP_DATA` 修改。插件和 MCP 需要使用同一目录。
 
 - `config.json`：委派设置。
-- `tasks.json`：任务及结果，包含提示、回答和执行日志。
+- `tasks.json`：任务及结果，包含提示、回答、执行日志、Harness Token 用量，以及重试关系（`retryOf`、`attempt`）。
 - `runtime.json`：运行时本地地址和随机连接令牌，关闭插件时清理。
 - `server.lock/`：防止同一数据目录被重复使用。
 
@@ -95,7 +111,7 @@ npm run build
 npm test
 ```
 
-测试覆盖真实子进程事件处理、续聊参数、失败与退出时日志、取消、插件卸载与启动中停用、保留页面连接后的反复启停、桌面来源检查、令牌验证以及 stdio MCP 的离线初始化/在线发现。
+测试覆盖真实子进程事件处理、续聊参数、失败与退出时日志、取消、插件卸载与启动中停用、保留页面连接后的反复启停、桌面来源检查、令牌验证以及 stdio MCP 的离线初始化/在线发现。`test/retry.test.mjs` 另外覆盖：失败和中断任务可手动重试、其他状态被拒绝且不启动进程、重试复制执行快照、重试不继承原会话、重试关系持久化重启后仍可见，以及 `retry_task` 在 MCP 与面板接口上的一致性。
 
 ```powershell
 npm run test:lifecycle

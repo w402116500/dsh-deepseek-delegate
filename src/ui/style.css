@@ -3,3 +3,7 @@
 @keyframes dd-pulse{50%{opacity:.3}}
 @media(max-width:850px){.dd-header{padding:22px}.dd-nav{padding:0 22px}.dd-workspace{grid-template-columns:195px minmax(0,1fr)}.dd-compose,.dd-detail,.dd-settings{padding:25px 22px}.dd-grid{grid-template-columns:1fr}.dd-connection{font-size:11px}.dd-heading p{display:none}.dd-compose-footer{align-items:stretch;flex-direction:column}.dd-compose-footer>button{align-self:flex-end}}
 @media(prefers-reduced-motion:reduce){.dd-running i{animation:none}}
+.dd-root .dd-retry{border-color:rgba(124,156,255,.45);color:var(--dd-accent)}
+.dd-root .dd-retry:hover{background:rgba(124,156,255,.12)}
+.dd-metadata b{font-weight:650;color:var(--dd-ink)}
+.dd-task-usage,.dd-usage-summary{color:var(--dd-muted);font-size:11px}

@@ -5,7 +5,16 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 async function main() {
-  const root = path.join(path.dirname(process.execPath), 'resources/app.asar/dsh/node_modules');
+  const resources = path.join(path.dirname(process.execPath), 'resources');
+  const roots = [
+    path.join(resources, 'app.asar/dsh/node_modules'),
+    path.join(resources, 'app.asar/node_modules'),
+    path.join(resources, 'app/dsh/node_modules'),
+    path.join(resources, 'app/node_modules'),
+  ];
+  const root = roots.find(candidate => fs.existsSync(path.join(candidate, '@deepseek-ai/cordis/lib/index.js')))
+    || (fs.existsSync(path.join(resources, 'app.asar')) ? roots[0] : undefined);
+  if (!root) throw new Error(`无法在 ${resources} 下找到 Harness 运行时依赖`);
   const load = name => import(pathToFileURL(path.join(root, name)));
   const { Context } = await load('@deepseek-ai/cordis/lib/index.js');
   const { default: WebServer } = await load('@deepseek-ai/dsh-host-webserver/lib/index.js');

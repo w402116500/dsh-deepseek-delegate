@@ -25,7 +25,7 @@ function Settings({ state, onSave, busy }) {
       <Field label="任务超时（秒）"><input type="number" min="10" max="3600" required value={form.timeoutSeconds} onChange={e => change('timeoutSeconds', Number(e.target.value))}/></Field>
     </div>
     <h3>Harness 连接</h3>
-    <Field label="CLI 或桌面程序路径" hint={`留空自动检测${state.launcher ? `：${state.launcher}` : '。支持官方 dsh.cmd 或 DeepSeek Harness.exe。'}`}><input value={form.executable} placeholder="自动检测" onChange={e => change('executable', e.target.value)}/></Field>
+    <Field label="CLI 或桌面程序路径" hint={`留空自动检测${state.launcher ? `：${state.launcher}` : '。支持官方 dsh.cmd、DeepSeek Harness.exe 或 DSH Desktop.exe。'}`}><input value={form.executable} placeholder="自动检测" onChange={e => change('executable', e.target.value)}/></Field>
     <label className="dd-check"><input type="checkbox" checked={form.reuseSavedAuth} onChange={e => change('reuseSavedAuth', e.target.checked)}/>复用 Harness 已保存的登录与凭据</label>
     <label className="dd-check"><input type="checkbox" checked={form.reuseProviders} onChange={e => change('reuseProviders', e.target.checked)}/>复用桌面配置中的第三方供应商</label>
     <Field label="供应商配置文件" hint="读取其中的供应商声明，凭据仍由 Harness 管理。"><input disabled={!form.reuseProviders} value={form.providerConfigPath} onChange={e => change('providerConfigPath', e.target.value)}/></Field>

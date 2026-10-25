@@ -6,7 +6,7 @@ import { resolveLauncher } from '../src/harness.mjs';
 // The child creates an isolated Host and never opens the user's profile.
 const launcher = resolveLauncher();
 if (launcher.env.ELECTRON_RUN_AS_NODE !== '1') {
-  throw new Error('此测试需要 Harness 桌面运行时，请将 DSH_EXECUTABLE 指向 DeepSeek Harness.exe 或官方 dsh.cmd。');
+  throw new Error('此测试需要 Harness 桌面运行时，请将 DSH_EXECUTABLE 指向 DeepSeek Harness.exe、DSH Desktop.exe 或官方 dsh.cmd。');
 }
 const child = spawn(launcher.command, ['--expose-internals', fileURLToPath(new URL('./lifecycle-host.cjs', import.meta.url))], {
   shell: false, windowsHide: true, stdio: 'inherit', env: { ...process.env, ...launcher.env },

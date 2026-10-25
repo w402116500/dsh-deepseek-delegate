@@ -6,10 +6,42 @@ import { parseRoute } from './config.mjs';
 import { parseDocument } from 'yaml';
 
 function exists(file) { try { return fs.statSync(file).isFile(); } catch { return false; } }
+function desktopExecutable(install) {
+  for (const name of ['DeepSeek Harness.exe', 'DSH Desktop.exe']) {
+    const candidate = path.join(install, name);
+    if (exists(candidate)) return candidate;
+  }
+  return '';
+}
+function desktopEntry(install) {
+  const resources = path.join(install, 'resources');
+  const appAsar = path.join(resources, 'app.asar');
+  // ASAR children are virtual paths, so only the archive itself can be
+  // checked with fs. Keep the historical entry first for older releases.
+  if (fs.existsSync(appAsar)) {
+    return path.join(appAsar, 'dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js');
+  }
+  const app = path.join(resources, 'app');
+  if (!fs.existsSync(app)) return '';
+  for (const entry of [
+    path.join(app, 'lib/desktop-cli.js'),
+    path.join(app, 'node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js'),
+    path.join(app, 'dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js'),
+    path.join(app, 'node_modules/@deepseek-ai/dsh/lib/bin.js'),
+  ]) if (exists(entry)) return entry;
+  return '';
+}
+function desktopLauncher(absolute) {
+  const install = path.dirname(absolute);
+  const command = desktopExecutable(install);
+  const entry = desktopEntry(install);
+  if (!command || !entry) return undefined;
+  return { command, prefix: ['--expose-internals', entry], env: { ELECTRON_RUN_AS_NODE: '1' }, detected: absolute };
+}
 export function resolveLauncher(configured = '') {
   const candidates = configured ? [configured] : [
     process.env.DSH_EXECUTABLE,
-    ...(/DeepSeek Harness\.exe$/i.test(process.execPath) ? [process.execPath] : []),
+    ...(/(?:DeepSeek Harness|DSH Desktop)\.exe$/i.test(process.execPath) ? [process.execPath] : []),
     'E:\\DeepSeekHarness\\resources\\runtime\\cli\\bin\\dsh.cmd',
     path.join(process.env.LOCALAPPDATA || os.homedir(), 'Programs', 'DeepSeek Harness', 'resources', 'runtime', 'cli', 'bin', 'dsh.cmd'),
     ...(process.env.PATH || '').split(path.delimiter).flatMap(p => [path.join(p, 'dsh.cmd'), path.join(p, 'dsh')]),
@@ -18,19 +50,16 @@ export function resolveLauncher(configured = '') {
     const absolute = path.resolve(candidate);
     if (!exists(absolute)) continue;
     let install;
-    if (/DeepSeek Harness\.exe$/i.test(absolute)) install = path.dirname(absolute);
+    if (/(?:DeepSeek Harness|DSH Desktop)\.exe$/i.test(absolute)) install = path.dirname(absolute);
     if (/dsh\.cmd$/i.test(absolute)) install = path.resolve(path.dirname(absolute), '../../../..');
     if (install) {
-      const command = path.join(install, 'DeepSeek Harness.exe');
-      const entry = path.join(install, 'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js');
-      // Electron exposes ASAR archives as virtual directories; plain Node sees a file.
-      if (!exists(command) || !fs.existsSync(path.join(install, 'resources/app.asar'))) continue;
-      return { command, prefix: ['--expose-internals', entry], env: { ELECTRON_RUN_AS_NODE: '1' }, detected: absolute };
+      const launcher = desktopLauncher(absolute);
+      if (launcher) return launcher;
     }
-    if (/\.(cmd|bat)$/i.test(absolute)) throw new Error('请选择官方 dsh.cmd 或 DeepSeek Harness.exe；不执行任意批处理包装器');
+    if (/\.(cmd|bat)$/i.test(absolute)) throw new Error('请选择官方 dsh.cmd、DeepSeek Harness.exe 或 DSH Desktop.exe；不执行任意批处理包装器');
     return { command: absolute, prefix: [], env: {}, detected: absolute };
   }
-  throw new Error('找不到 DeepSeek Harness CLI。请在设置中指定 dsh.cmd 或 DeepSeek Harness.exe 的完整路径。');
+  throw new Error('找不到 DeepSeek Harness CLI。请在设置中指定 dsh.cmd、DeepSeek Harness.exe 或 DSH Desktop.exe 的完整路径。');
 }
 export function buildOverlay(config) {
   const { provider, model } = parseRoute(config.modelRoute);

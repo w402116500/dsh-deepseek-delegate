@@ -21,7 +21,7 @@ npm run plugin:install
 CLI 默认从当前 Harness 进程、`DSH_EXECUTABLE`、常见安装位置和 PATH 检测。如果没有找到，可设置环境变量后安装：
 
 ```powershell
-$env:DSH_EXECUTABLE = 'C:\path\to\DeepSeek Harness.exe'
+$env:DSH_EXECUTABLE = 'C:\path\to\DSH Desktop.exe'
 npm run plugin:install
 ```
 
@@ -101,7 +101,7 @@ npm test
 npm run test:lifecycle
 ```
 
-启停验证使用已安装的 Harness 桌面运行时，创建独立的临时 Host 和内存认证，不读取用户凭据、不调用模型。它通过官方客户端 RPC 验证三轮插件启停与重载、Host 更换后的连接恢复、设置持久化和路由认证。可用 `DSH_EXECUTABLE` 指定桌面程序或官方 `dsh.cmd`。
+启停验证使用已安装的 Harness 桌面运行时，创建独立的临时 Host 和内存认证，不读取用户凭据、不调用模型。它通过官方客户端 RPC 验证三轮插件启停与重载、Host 更换后的连接恢复、设置持久化和路由认证。可用 `DSH_EXECUTABLE` 指定 `DSH Desktop.exe`、`DeepSeek Harness.exe` 或官方 `dsh.cmd`。
 
 ```powershell
 npm run test:smoke
@@ -126,7 +126,7 @@ test/               集成测试和 CLI fixture
 
 - **cannot resolve profile bundle**：确认安装命令已经成功结束、项目目录仍存在。运行 `npm run plugin:install` 修复链接，然后重启 Harness。
 - **页面无法连接**：确认插件已启用；页面会自动重连。更新插件代码后，运行 `npm run build` 并重启 Harness，以载入新版本。
-- **找不到 CLI**：在设置中填入官方 `dsh.cmd` 或 `DeepSeek Harness.exe` 的绝对路径。
+- **找不到 CLI**：在设置中填入官方 `dsh.cmd`、`DeepSeek Harness.exe` 或 `DSH Desktop.exe` 的绝对路径。
 - **供应商未注册或鉴权失败**：检查设置中的供应商文件和模型路由，以及 Harness 已保存的对应凭据。错误会保留在任务日志里。
 - **服务已在运行**：同一数据目录只能启用一个实例。正常退出旧实例后重试；不要在进程仍运行时手动删除锁目录。
 

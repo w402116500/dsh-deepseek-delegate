@@ -5,11 +5,12 @@ import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 export const DATA = path.resolve(process.env.DEEPSEEK_MCP_DATA || path.join(os.homedir(), '.dsh', 'deepseek-delegate'));
 export const DEFAULTS = {
   executable: '', modelRoute: 'codexauv/deepseek-v4.1-flash', reasoningEffort: 'default',
   cwd: ROOT, reuseSavedAuth: true, timeoutSeconds: 600,
-  permissionMode: 'read-only', maxConcurrent: 1,
+  permissionMode: 'read-only', maxConcurrent: 1, historyLimit: 1000,
   reuseProviders: true, providerConfigPath: path.join(os.homedir(), '.dsh', 'profiles', 'desktop', 'cordis.patch.yml'),
 };
 export function atomicJSON(file, data) {
@@ -43,6 +44,7 @@ export function validateConfig(input) {
   if (!['read-only', 'workspace-write', 'danger-full-access'].includes(merged.permissionMode)) throw new Error('权限模式无效');
   if (!Number.isInteger(merged.timeoutSeconds) || merged.timeoutSeconds < 10 || merged.timeoutSeconds > 3600) throw new Error('超时范围为 10–3600 秒');
   if (!Number.isInteger(merged.maxConcurrent) || merged.maxConcurrent < 1 || merged.maxConcurrent > 4) throw new Error('并发范围为 1–4');
+  if (!Number.isInteger(merged.historyLimit) || merged.historyLimit < 0 || merged.historyLimit > 10000) throw new Error('历史保留范围为 0–10000，0 表示不限');
   return merged;
 }
 export function redact(value) {

@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { StringDecoder } from 'node:string_decoder';
 import { atomicJSON, loadJSON, validateConfig, DEFAULTS, redact } from './config.mjs';
 import { buildOverlay, spawnHarness, stopTree } from './harness.mjs';
 
 export const ACTIVE = new Set(['queued', 'running']);
+export const TASK_STATUSES = ['queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted'];
 // Only terminal states that never produced a definitive answer may be retried,
 // and only when a human asks for it. Nothing retries automatically.
 export const RETRYABLE = new Set(['failed', 'interrupted']);
@@ -69,7 +70,20 @@ export class TaskManager extends EventEmitter {
     }
     this.persist();
   }
-  persist() { atomicJSON(path.join(this.dir, 'tasks.json'), this.tasks); }
+  persist() {
+    // Active tasks and children that are still draining never count against the
+    // history limit. Keep the most recently ended tasks, not just newest IDs.
+    let retained = this.tasks;
+    if (this.config.historyLimit) {
+      const history = this.tasks.map((task, index) => ({ task, index }))
+        .filter(({ task }) => !ACTIVE.has(task.status) && !this.children.has(task.id))
+        .sort((a, b) => String(b.task.endedAt || b.task.createdAt).localeCompare(String(a.task.endedAt || a.task.createdAt)) || b.index - a.index);
+      const remove = new Set(history.slice(this.config.historyLimit).map(({ task }) => task.id));
+      retained = this.tasks.filter(task => !remove.has(task.id));
+    }
+    atomicJSON(path.join(this.dir, 'tasks.json'), retained);
+    this.tasks = retained;
+  }
   changed(t, persist = true) {
     if (persist) this.persist();
     this.emit('change', t?.id);
@@ -78,10 +92,23 @@ export class TaskManager extends EventEmitter {
     if (!input) return this.config;
     const next = validateConfig({ ...this.config, ...input });
     atomicJSON(path.join(this.dir, 'config.json'), next); this.config = next;
-    this.emit('change'); this.pump(); return next;
+    this.persist(); this.emit('change'); this.pump(); return next;
   }
   get(id) { const t = this.tasks.find(t => t.id === id); if (!t) throw new Error('任务不存在'); return t; }
-  list() { return [...this.tasks].reverse().map(({ events, answer, stderr, config, ...t }) => ({ ...t, preview: (answer || '').slice(0, 140) })); }
+  list() { return [...this.tasks].reverse().map(t => this.taskSummary(t)); }
+  taskSummary(task) {
+    const { events, answer, stderr, prompt, ...t } = this.publicTask(task);
+    return { ...t, prompt: prompt.slice(0, 500), promptTruncated: prompt.length > 500, preview: (answer || '').slice(0, 140) };
+  }
+  listPage({ limit = 50, offset = 0, status } = {}) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('每页条数范围为 1–100');
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('分页偏移必须是非负整数');
+    if (status !== undefined && !TASK_STATUSES.includes(status)) throw new Error('任务状态无效');
+    const matches = [...this.tasks].reverse().filter(task => status === undefined || task.status === status);
+    const tasks = matches.slice(offset, offset + limit).map(task => this.taskSummary(task));
+    const hasMore = offset + tasks.length < matches.length;
+    return { tasks, total: matches.length, limit, offset, hasMore, nextOffset: hasMore ? offset + tasks.length : null };
+  }
   usageSummary() {
     const totals = Object.fromEntries(USAGE_FIELDS.map(key => [key, 0]));
     let reportedTaskCount = 0;
@@ -96,6 +123,24 @@ export class TaskManager extends EventEmitter {
     if (this.closing) throw new Error('服务正在关闭');
     const { prompt, continueTaskId } = input;
     if (typeof prompt !== 'string' || !prompt.trim() || Buffer.byteLength(prompt) > 65536) throw new Error('请输入任务，最大 64 KiB');
+    if (input.cwd !== undefined && (typeof input.cwd !== 'string' || !path.isAbsolute(input.cwd))) throw new Error('工作目录必须是绝对路径');
+    if (continueTaskId !== undefined && (typeof continueTaskId !== 'string' || !continueTaskId)) throw new Error('续聊任务 ID 无效');
+    if (input.reasoningEffort !== undefined && !['default', 'off', 'low', 'medium', 'high', 'max'].includes(input.reasoningEffort)) throw new Error('思考强度无效');
+    let idempotencyKeyHash, requestFingerprint;
+    if (input.idempotencyKey !== undefined) {
+      if (typeof input.idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(input.idempotencyKey)) throw new Error('幂等键必须是 1–128 位字母、数字或 . _ : -');
+      const hash = text => createHash('sha256').update(text).digest('hex');
+      idempotencyKeyHash = hash(input.idempotencyKey);
+      requestFingerprint = hash(JSON.stringify({ prompt, cwd: input.cwd === undefined ? null : path.resolve(input.cwd), continueTaskId: continueTaskId ?? null, reasoningEffort: input.reasoningEffort ?? null }));
+      // Compare the submitted arguments before resolving current defaults or
+      // checking capacity: a transport retry must still find the original task
+      // after a settings change, or while the queue is full.
+      const existing = this.tasks.find(task => task.idempotencyKeyHash === idempotencyKeyHash);
+      if (existing) {
+        if (existing.requestFingerprint !== requestFingerprint) throw new Error('幂等键已用于不同的任务参数，请更换 idempotencyKey');
+        return this.publicTask(existing);
+      }
+    }
     this.assertCapacity();
     const config = validateConfig({
       ...this.config,
@@ -111,7 +156,7 @@ export class TaskManager extends EventEmitter {
       if (this.tasks.some(t => ACTIVE.has(t.status) && t.sessionId === parent.sessionId)) throw new Error('此会话已有未结束任务');
       sessionId = parent.sessionId;
     }
-    const t = this.create({ prompt, config, sessionId, continueTaskId: continueTaskId || null });
+    const t = this.create({ prompt, config, sessionId, continueTaskId: continueTaskId || null, idempotencyKeyHash, requestFingerprint });
     return this.publicTask(t);
   }
   // A manual retry is a brand-new execution attempt: it copies the recorded
@@ -135,18 +180,22 @@ export class TaskManager extends EventEmitter {
   assertCapacity() {
     if (this.tasks.filter(t => ACTIVE.has(t.status)).length >= 100) throw new Error('任务队列已满');
   }
-  create({ prompt, config, sessionId = null, continueTaskId = null, retryOf = null, attempt = 1 }) {
+  create({ prompt, config, sessionId = null, continueTaskId = null, retryOf = null, attempt = 1, idempotencyKeyHash, requestFingerprint }) {
     const t = { id: randomUUID(), prompt: redact(prompt), cwd: config.cwd, modelRoute: config.modelRoute,
       reasoningEffort: config.reasoningEffort,
       permissionMode: config.permissionMode, status: 'queued', createdAt: new Date().toISOString(),
       continueTaskId, sessionId, answer: '', stderr: '', events: [], config,
-      exitCode: null, error: null, usage: null, contextUsage: null, retryOf, attempt };
+      exitCode: null, error: null, usage: null, contextUsage: null, retryOf, attempt,
+      ...(idempotencyKeyHash ? { idempotencyKeyHash, requestFingerprint } : {}) };
     // Keep the literal prompt only in memory until delivered; persisted task records are redacted.
     Object.defineProperty(t, '_prompt', { value: prompt, configurable: true });
-    this.tasks.push(t); this.changed(t); queueMicrotask(() => this.pump());
+    this.tasks.push(t);
+    try { this.changed(t); }
+    catch (e) { this.tasks = this.tasks.filter(task => task.id !== t.id); throw e; }
+    queueMicrotask(() => this.pump());
     return t;
   }
-  publicTask(t) { const { config, ...visible } = t; return visible; }
+  publicTask(t) { const { config, idempotencyKeyHash, requestFingerprint, ...visible } = t; return visible; }
   event(t, type, text) {
     t.events.push({ at: new Date().toISOString(), type, text: redact(text).slice(0, 4000) });
     if (t.events.length > 250) t.events.shift();

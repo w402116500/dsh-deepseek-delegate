@@ -30,6 +30,7 @@ function Settings({ state, onSave, busy }) {
       <Field label="默认思考强度" hint="模型默认会沿用模型或供应商自身的设置；具体档位取决于模型支持。"><select value={form.reasoningEffort || 'default'} onChange={e => change('reasoningEffort', e.target.value)}>{Object.entries(reasoningLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
       <Field label="同时执行任务数"><input type="number" min="1" max="4" required value={form.maxConcurrent} onChange={e => change('maxConcurrent', Number(e.target.value))}/></Field>
       <Field label="任务超时（秒）"><input type="number" min="10" max="3600" required value={form.timeoutSeconds} onChange={e => change('timeoutSeconds', Number(e.target.value))}/></Field>
+      <Field label="已结束任务保留数" hint="默认 1000，0 表示不限。保存后会清理最老的已结束记录，包含其幂等键；排队和运行任务不受影响。"><input type="number" min="0" max="10000" required value={form.historyLimit ?? 1000} onChange={e => change('historyLimit', Number(e.target.value))}/></Field>
     </div>
     <h3>Harness 连接</h3>
     <Field label="CLI 或桌面程序路径" hint={`留空自动检测${state.launcher ? `：${state.launcher}` : '。支持官方 dsh.cmd、DeepSeek Harness.exe 或 DSH Desktop.exe。'}`}><input value={form.executable} placeholder="自动检测" onChange={e => change('executable', e.target.value)}/></Field>
@@ -63,22 +64,35 @@ function Page({ api }) {
   const [selected, setSelected] = useState(null), [detail, setDetail] = useState(null);
   const [prompt, setPrompt] = useState(''), [cwd, setCwd] = useState(''), [parent, setParent] = useState(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
+  const [offset, setOffset] = useState(0), [status, setStatus] = useState('');
+  const submission = useRef(null);
   const selection = useRef(null); selection.current = selected;
   useEffect(() => {
     let disposed = false, pending = false;
     async function refresh() {
       if (pending) return; pending = true;
       try {
-        const next = await api('/api/state');
+        const next = await api(`/api/state?limit=50&offset=${offset}${status ? `&status=${status}` : ''}`);
+        if (offset > 0 && offset >= next.taskPage.total) {
+          if (!disposed) setOffset(Math.max(0, Math.floor((next.taskPage.total - 1) / 50) * 50));
+          return;
+        }
         const taskId = selection.current;
-        const task = taskId ? await api(`/api/tasks/${taskId}`) : null;
+        let task = null;
+        if (taskId) {
+          try { task = await api(`/api/tasks/${taskId}`); }
+          catch (e) {
+            if (!e.message.includes('任务不存在')) throw e;
+            if (!disposed && selection.current === taskId) { setSelected(null); setNotice('这条任务记录已被历史保留策略清理。'); }
+          }
+        }
         if (!disposed) { setState(next); setError(''); if (selection.current === taskId) setDetail(task); }
       } catch (e) { if (!disposed) setError(e.message); }
       finally { pending = false; }
     }
     refresh(); const timer = setInterval(refresh, 1500);
     return () => { disposed = true; clearInterval(timer); };
-  }, [api]);
+  }, [api, offset, status]);
   useEffect(() => { if (notice) { const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); } }, [notice]);
   async function action(fn) {
     setBusy(true); setError('');
@@ -87,33 +101,39 @@ function Page({ api }) {
     finally { setBusy(false); }
   }
   const choose = task => { setSelected(task.id); setDetail(null); setParent(null); };
-  const newTask = () => { setSelected(null); setDetail(null); setParent(null); setPrompt(''); setCwd(''); setTab('tasks'); };
+  const newTask = () => { submission.current = null; setSelected(null); setDetail(null); setParent(null); setPrompt(''); setCwd(''); setTab('tasks'); };
   const submit = e => {
     e.preventDefault(); action(async () => {
-      const task = await api('/api/tasks', { prompt, ...(cwd ? { cwd } : {}), ...(parent ? { continueTaskId: parent.id } : {}) });
+      const args = { prompt, ...(cwd ? { cwd } : {}), ...(parent ? { continueTaskId: parent.id } : {}) };
+      const fingerprint = JSON.stringify(args);
+      if (submission.current?.fingerprint !== fingerprint) submission.current = { fingerprint, idempotencyKey: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('') };
+      const task = await api('/api/tasks', { ...args, idempotencyKey: submission.current.idempotencyKey });
+      submission.current = null; setOffset(0); setStatus('');
       setDetail(task); setSelected(task.id); setParent(null); setPrompt('');
-      setState(p => ({ ...p, tasks: [task, ...p.tasks] }));
+      setState(p => ({ ...p, tasks: [task, ...p.tasks.filter(t => t.id !== task.id)].slice(0, 50) }));
     });
   };
   const resume = () => { setParent(detail); setCwd(detail.cwd); setSelected(null); setDetail(null); setPrompt(''); };
   // A retry always creates a separate task that starts a fresh session.
   const retry = () => action(async () => {
     const task = await api(`/api/tasks/${detail.id}/retry`, {});
-    setSelected(task.id); setDetail(task); setNotice('已创建重试任务，新任务已进入队列。');
+    setOffset(0); setStatus(''); setSelected(task.id); setDetail(task); setNotice('已创建重试任务，新任务已进入队列。');
   });
   const testConnection = () => action(async () => {
     const task = await api('/api/tasks', { prompt: '连通性测试：不要调用工具，不要读取或修改文件。请只回复 DEEPSEEK_PLUGIN_OK。' });
-    setTab('tasks'); setSelected(task.id); setDetail(task); setParent(null);
-    setState(p => ({ ...p, tasks: [task, ...p.tasks] }));
+    setOffset(0); setStatus(''); setTab('tasks'); setSelected(task.id); setDetail(task); setParent(null);
+    setState(p => ({ ...p, tasks: [task, ...p.tasks].slice(0, 50) }));
   });
   return <section className="dd-root" aria-label="DeepSeek 委派管理">
     <header className="dd-header"><div className="dd-heading"><div className="dd-logo"><Icon size={23}/></div><div><h1>DeepSeek 委派</h1><p>把任务交给 DeepSeek，进度留在这里。</p></div></div><span className={`dd-connection ${state && !error ? 'dd-online' : ''}`}><i/>{state && !error ? '插件已连接' : '等待连接'}</span></header>
     <nav className="dd-nav" aria-label="委派管理导航">{[['tasks', '任务'], ['settings', '设置'], ['integration', 'MCP 连接']].map(([id, name]) => <button key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{name}</button>)}<span/>{state && <button disabled={busy} onClick={testConnection}>连通性测试 ↗</button>}</nav>
     {error && <div role="alert" className="dd-alert">{error}</div>}{notice && <div role="status" className="dd-notice">{notice}</div>}
     {!state ? <div className="dd-loading">正在连接委派服务…</div> : tab === 'settings' ? <Settings state={state} busy={busy} onSave={form => action(async () => { const config = await api('/api/config', form, 'PUT'); setState(p => ({ ...p, config })); setNotice('设置已保存'); })}/> : tab === 'integration' ? <Integration state={state} onNotice={setNotice}/> : <div className="dd-workspace">
-      <aside className="dd-tasklist"><div className="dd-list-head"><span>全部任务 <b>{state.tasks.length}</b>{state.usage?.reportedTaskCount > 0 && <small className="dd-usage-summary">· 已统计 {tokenCount(state.usage.totalTokens)} tokens</small>}</span><button onClick={newTask} aria-label="新建任务">＋ 新建</button></div>
-        {!state.tasks.length && <p className="dd-empty-list">还没有任务。<br/>从右侧派发第一个任务。</p>}
+      <aside className="dd-tasklist"><div className="dd-list-head"><span>保留任务 <b>{state.usage?.taskCount ?? state.tasks.length}</b>{state.usage?.reportedTaskCount > 0 && <small className="dd-usage-summary">· 已保留记录统计 {tokenCount(state.usage.totalTokens)} tokens</small>}</span><button onClick={newTask} aria-label="新建任务">＋ 新建</button></div>
+        <label className="dd-task-filter"><span>任务状态</span><select value={status} onChange={e => { setStatus(e.target.value); setOffset(0); }}><option value="">全部状态</option>{Object.entries(statuses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        {!state.tasks.length && <p className="dd-empty-list">{status ? '没有符合条件的任务。' : '还没有任务，从右侧派发第一个任务。'}</p>}
         {state.tasks.map(task => <button className={`dd-task ${selected === task.id ? 'dd-selected' : ''}`} key={task.id} onClick={() => choose(task)}><div><Badge task={task}/><small>{new Date(task.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</small></div><strong>{task.prompt}</strong><p>{task.preview || task.modelRoute}</p>{task.usage && <small className="dd-task-usage">{usageLabel(task.usage)}</small>}</button>)}
+        {state.taskPage && <div className="dd-pagination"><button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}>上一页</button><span>{state.taskPage.total ? `${state.taskPage.offset + 1}–${state.taskPage.offset + state.tasks.length}` : '0'} / {state.taskPage.total}</span><button disabled={!state.taskPage.hasMore} onClick={() => setOffset(state.taskPage.nextOffset)}>下一页</button></div>}
       </aside>
       <main className="dd-content">
         {!selected ? <form className="dd-compose" onSubmit={submit}><div className="dd-section-head"><span className="dd-eyebrow">{parent ? '继续原生会话' : '新任务'}</span><h2>{parent ? '继续这项工作' : '让 DeepSeek 帮你完成任务'}</h2><p>清楚描述目标、上下文和期望结果。</p></div>

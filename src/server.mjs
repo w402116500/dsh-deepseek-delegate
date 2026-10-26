@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { ROOT, atomicJSON, loadJSON, redact } from './config.mjs';
+import { ROOT, VERSION, atomicJSON, loadJSON, redact } from './config.mjs';
 import { TaskManager } from './tasks.mjs';
 import { resolveLauncher, availableRoutes } from './harness.mjs';
 import { callTool } from './protocol.mjs';
@@ -60,16 +60,30 @@ export async function startServer(dir, { port = 0, launch } = {}) {
   let origin, closing;
   async function dispatch(method, pathname, data) {
     if (closing) throw new Error('插件正在关闭');
+    const url = new URL(pathname, 'http://localhost');
+    pathname = url.pathname;
+    const pageOptions = () => {
+      const options = {};
+      for (const key of ['limit', 'offset']) if (url.searchParams.has(key)) {
+        const value = url.searchParams.get(key);
+        if (!/^\d+$/.test(value)) throw new Error(`分页参数无效：${key}`);
+        options[key] = Number(value);
+      }
+      if (url.searchParams.has('status')) options.status = url.searchParams.get('status');
+      return options;
+    };
     const result = (value, status = 200) => ({ value, status });
     if (method === 'GET' && pathname === '/api/state') {
       let launcher, launcherError, routes = [], providerError;
       try { launcher = resolveLauncher(manager.config.executable).detected; } catch (e) { launcherError = e.message; }
       try { routes = availableRoutes(manager.config); } catch (e) { providerError = e.message; }
-      return result({ config: manager.settings(), tasks: manager.list(), usage: manager.usageSummary(), launcher, launcherError, providerError, routes,
-        version: '1.0.0', startedAt, pid: process.pid, dataDir: dir, integration: integrationConfig(dir) });
+      const { tasks, ...taskPage } = manager.listPage(pageOptions());
+      return result({ config: manager.settings(), tasks, taskPage, usage: manager.usageSummary(), launcher, launcherError, providerError, routes,
+        version: VERSION, startedAt, pid: process.pid, dataDir: dir, integration: integrationConfig(dir) });
     }
     if (method === 'GET' && pathname === '/api/ping') return result({ ok: true, pid: process.pid });
     if (method === 'PUT' && pathname === '/api/config') return result(manager.settings(data));
+    if (method === 'GET' && pathname === '/api/tasks') return result(manager.listPage(pageOptions()));
     if (method === 'POST' && pathname === '/api/tasks') return result(manager.delegate(data), 201);
     const taskMatch = typeof pathname === 'string' && pathname.match(/^\/api\/tasks\/([\w-]+)$/);
     if (method === 'GET' && taskMatch) return result(manager.publicTask(manager.get(taskMatch[1])));
@@ -96,7 +110,8 @@ export async function startServer(dir, { port = 0, launch } = {}) {
       if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
       if (!safeEqual(req.headers.authorization?.replace(/^Bearer /, ''), token)) return json({ error: '插件连接已失效，请重新打开 Harness 页面' }, 401);
       if (closing) return json({ error: '插件正在关闭' }, 503);
-      const pathname = new URL(req.url, origin).pathname;
+      const parsed = new URL(req.url, origin);
+      const pathname = parsed.pathname + parsed.search;
       const data = ['POST', 'PUT'].includes(req.method) ? await body(req) : undefined;
       const { value, status } = await dispatch(req.method, pathname, data);
       return json(value, status);

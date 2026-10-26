@@ -72,7 +72,7 @@ try {
   owned.add(cancel.id);
   const cancelled = await tool('cancel_task', { taskId: cancel.id });
   assert.equal(cancelled.status, 'cancelled');
-  const listed = await tool('list_tasks'); assert.ok(listed.some(t => t.id === cancel.id));
+  const listed = await tool('list_tasks'); assert.ok(listed.tasks.some(t => t.id === cancel.id));
   console.log(`PASS: cancellation and shared UI/MCP task list (${cancel.id})`);
 } finally {
   for (const id of owned) {

@@ -174,7 +174,7 @@ test('retry_task is exposed through MCP dispatch and the panel API with the same
   await assert.rejects(callTool(app.manager, 'retry_task', { taskId: done.id, force: true }), /未知参数/);
   // The failed original is still failed and still listed next to its retries.
   assert.equal(app.manager.get(failed.id).status, 'failed');
-  const listed = await request(app.runtime, '/api/tool', { name: 'list_tasks', arguments: {} });
+  const { tasks: listed } = await request(app.runtime, '/api/tool', { name: 'list_tasks', arguments: {} });
   assert.deepEqual(listed.map(task => task.id).sort(), [failed.id, viaPanel.id, viaTool.id].sort());
   assert.equal(listed.find(task => task.id === viaTool.id).retryOf, failed.id);
 });

@@ -10,6 +10,6 @@ async function main() {
   if (mode !== 'status') throw new Error('用法：node src/cli.mjs mcp | config | status');
   const runtime = await ensureServer();
   const state = await request(runtime, '/api/state');
-  console.log(JSON.stringify({ running: true, modelRoute: state.config.modelRoute, tasks: state.tasks.length, dataDir: DATA }, null, 2));
+  console.log(JSON.stringify({ running: true, modelRoute: state.config.modelRoute, tasks: state.taskPage.total, dataDir: DATA }, null, 2));
 }
 main().catch(e => { console.error(redact(e.message)); process.exitCode = 1; });

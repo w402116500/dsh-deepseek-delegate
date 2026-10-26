@@ -204,6 +204,7 @@ test('stdio bridge initializes while offline, reports offline tool error, then d
   const init = await rpc(1, 'initialize', { protocolVersion: '2025-06-18' }); assert.equal(init.result.protocolVersion, '2025-06-18');
   const offline = await rpc(2, 'tools/call', { name: 'list_tasks' }); assert.equal(offline.result.isError, true); assert.match(offline.result.content[0].text, /插件未运行/);
   const app = await startServer(dir, { launch: launcher('ok') }); t.after(() => app.close());
-  const online = await rpc(3, 'tools/call', { name: 'list_tasks' }); assert.deepEqual(JSON.parse(online.result.content[0].text), []);
+  const online = await rpc(3, 'tools/call', { name: 'list_tasks' }); assert.deepEqual(JSON.parse(online.result.content[0].text).tasks, []);
+  assert.deepEqual(online.result.structuredContent, JSON.parse(online.result.content[0].text));
   await app.close(); child.stdin.end(); await once(child, 'close');
 });

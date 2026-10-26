@@ -31,7 +31,7 @@ function launcherFor(modes, sessions) {
 function harness(t, modes = []) {
   const dir = directory(t), sessions = [];
   const manager = new TaskManager(dir, { launch: launcherFor(modes, sessions) });
-  manager.settings({ cwd: dir, reuseProviders: false });
+  manager.settings({ cwd: dir, reuseProviders: false, reasoningEffort: 'max' });
   t.after(() => manager.close());
   return { manager, dir, sessions, modes };
 }
@@ -59,6 +59,7 @@ test('failed task retries as a new attempt that copies the snapshot and starts a
   assert.equal(retry.prompt, failed.prompt);
   assert.equal(retry.cwd, failed.cwd);
   assert.equal(retry.modelRoute, failed.modelRoute);
+  assert.equal(retry.reasoningEffort, 'max');
   assert.equal(retry.permissionMode, failed.permissionMode);
   // A retry is a new run, never a continuation: no session and no continueTaskId.
   assert.equal(retry.sessionId, null);

@@ -67,7 +67,10 @@ export function buildOverlay(config) {
     ...providerPatches(config),
     ...(config.reuseSavedAuth ? [{ id: 'credentials', disabled: false }, { id: 'authorization', disabled: false }] : []),
     ...(config.reuseSavedAuth && provider === 'deepseek-account' ? [{ id: 'deepseek-account', disabled: false }] : []),
-    { id: 'agent-default-model', config: { provider, model } },
+    { id: 'agent-default-model', config: {
+      provider, model,
+      ...(config.reasoningEffort === 'default' ? {} : { reasoningEffort: config.reasoningEffort }),
+    } },
     // Unattended runs cannot answer interactive approval requests.
     // The sandbox still enforces the selected filesystem policy.
     { id: 'sandbox-policy', config: { mode: config.permissionMode, workspaceRoot: config.cwd } },

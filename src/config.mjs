@@ -7,7 +7,7 @@ import os from 'node:os';
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DATA = path.resolve(process.env.DEEPSEEK_MCP_DATA || path.join(os.homedir(), '.dsh', 'deepseek-delegate'));
 export const DEFAULTS = {
-  executable: '', modelRoute: 'codexauv/deepseek-v4.1-flash',
+  executable: '', modelRoute: 'codexauv/deepseek-v4.1-flash', reasoningEffort: 'default',
   cwd: ROOT, reuseSavedAuth: true, timeoutSeconds: 600,
   permissionMode: 'read-only', maxConcurrent: 1,
   reuseProviders: true, providerConfigPath: path.join(os.homedir(), '.dsh', 'profiles', 'desktop', 'cordis.patch.yml'),
@@ -35,6 +35,7 @@ export function validateConfig(input) {
   for (const key of Object.keys(DEFAULTS)) if (Object.hasOwn(input, key)) c[key] = input[key];
   const merged = { ...DEFAULTS, ...c };
   parseRoute(merged.modelRoute);
+  if (!['default', 'off', 'low', 'medium', 'high', 'max'].includes(merged.reasoningEffort)) throw new Error('思考强度无效');
   for (const key of ['cwd', 'executable', 'providerConfigPath']) if (typeof merged[key] !== 'string' || /[\0\r\n]/.test(merged[key])) throw new Error(`${key} 路径无效`);
   if (!path.isAbsolute(merged.cwd) || !fs.statSync(merged.cwd).isDirectory()) throw new Error('工作目录必须是存在的绝对路径');
   if (typeof merged.reuseSavedAuth !== 'boolean') throw new Error('登录复用设置无效');

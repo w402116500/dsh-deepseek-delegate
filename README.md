@@ -29,8 +29,8 @@ npm run plugin:install
 
 - **任务**：派发任务，查看状态、回答、工作目录、Token 用量和执行日志；取消排队或运行任务。
 - **继续对话**：接续已完成任务的 Harness 原生会话，要求模型路由与工作目录一致。
-- **重试任务**：仅失败或中断的任务显示此入口。它在原任务记录之外新建一次执行尝试，沿用原任务的提示、目录、模型和权限快照，但使用全新会话。
-- **设置**：选择模型路由、CLI、工作目录、权限、并发数和超时；控制是否复用登录和第三方供应商。
+- **重试任务**：仅失败或中断的任务显示此入口。它在原任务记录之外新建一次执行尝试，沿用原任务的提示、目录、模型、思考强度和权限快照，但使用全新会话。
+- **设置**：选择模型路由、默认思考强度、CLI、工作目录、权限、并发数和超时；控制是否复用登录和第三方供应商。思考强度支持跟随模型默认、关闭、低、中、高和最高，实际档位由所选模型/供应商决定。
 - **MCP 连接**：复制当前机器适用的 Codex TOML 或通用 MCP JSON。
 - **连通性测试**：发送要求不调用工具、不访问文件的测试提示，预期回答 `DEEPSEEK_PLUGIN_OK`。
 
@@ -67,7 +67,7 @@ DEEPSEEK_MCP_DATA = "/absolute/path/to/delegate-data"
 
 | 工具 | 用途 |
 | --- | --- |
-| `delegate_to_deepseek` | 立即返回任务 ID；传入 `continueTaskId` 可续聊 |
+| `delegate_to_deepseek` | 立即返回任务 ID；传入 `continueTaskId` 可续聊；可用 `reasoningEffort` 覆盖本次思考强度 |
 | `get_task` | 获取状态、回答、会话 ID 和日志 |
 | `wait_task` | 等待最多 30 秒；仍在排队/运行时可再次调用 |
 | `cancel_task` | 取消任务，并终止该任务拥有的进程树 |
@@ -75,10 +75,10 @@ DEEPSEEK_MCP_DATA = "/absolute/path/to/delegate-data"
 | `list_tasks` | 列出任务摘要 |
 | `get_deepseek_settings` | 读取委派设置 |
 
-示例参数：
+示例参数（省略 `reasoningEffort` 时使用管理页面的默认设置；传入 `default` 时跟随模型/供应商默认。可选值：`default`、`off`、`low`、`medium`、`high`、`max`）：
 
 ```json
-{"prompt":"分析此项目的入口和主要模块，不修改文件。","cwd":"/absolute/path/to/workspace"}
+{"prompt":"分析此项目的入口和主要模块，不修改文件。","cwd":"/absolute/path/to/workspace","reasoningEffort":"high"}
 ```
 
 MCP 初始化不要求 Harness 在线；调用业务工具时才发现插件。关闭或重启 Harness 后，下次调用会重新读取服务地址。失败或中断任务不会自动重试；重新派发前应先检查日志和工作目录。
@@ -89,7 +89,7 @@ MCP 初始化不要求 Harness 在线；调用业务工具时才发现插件。�
 
 - 只有 `failed` 和 `interrupted` 可以重试。`queued`、`running`、`completed`、`cancelled` 一律返回错误，不会创建任务或启动进程；已完成的任务请用 `continueTaskId` 续聊。
 - 重试会新建一个任务并返回新的任务 ID。原任务的状态、回答和日志保持不变，重试任务用 `retryOf` 指向原任务，用 `attempt` 记录尝试次数（原任务为 1，第一次重试为 2）。
-- 新任务复制原任务的执行快照：提示、`cwd`、`modelRoute`、`permissionMode`、超时和供应商设置都取自原任务，而不是当前设置。提示来自已持久化的记录，因此是脱敏后的文本。
+- 新任务复制原任务的执行快照：提示、`cwd`、`modelRoute`、思考强度、`permissionMode`、超时和供应商设置都取自原任务，而不是当前设置。提示来自已持久化的记录，因此是脱敏后的文本。
 - 重试始终是一次全新的执行尝试：它不会带上原任务的 `sessionId`，也不会用 `continueTaskId` 续聊。
 - 重试关系写入 `tasks.json`，重启后仍可在任务详情里看到来源和尝试次数。
 

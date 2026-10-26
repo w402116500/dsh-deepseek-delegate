@@ -97,7 +97,11 @@ export class TaskManager extends EventEmitter {
     const { prompt, continueTaskId } = input;
     if (typeof prompt !== 'string' || !prompt.trim() || Buffer.byteLength(prompt) > 65536) throw new Error('请输入任务，最大 64 KiB');
     this.assertCapacity();
-    const config = validateConfig({ ...this.config, ...(input.cwd ? { cwd: input.cwd } : {}) });
+    const config = validateConfig({
+      ...this.config,
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+      ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
+    });
     let sessionId;
     if (continueTaskId) {
       const parent = this.get(continueTaskId);
@@ -133,6 +137,7 @@ export class TaskManager extends EventEmitter {
   }
   create({ prompt, config, sessionId = null, continueTaskId = null, retryOf = null, attempt = 1 }) {
     const t = { id: randomUUID(), prompt: redact(prompt), cwd: config.cwd, modelRoute: config.modelRoute,
+      reasoningEffort: config.reasoningEffort,
       permissionMode: config.permissionMode, status: 'queued', createdAt: new Date().toISOString(),
       continueTaskId, sessionId, answer: '', stderr: '', events: [], config,
       exitCode: null, error: null, usage: null, contextUsage: null, retryOf, attempt };
